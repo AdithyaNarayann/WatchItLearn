@@ -1,111 +1,52 @@
-"""Pacing manager, convergence detector, and WebSocket frame generator for WatchItLearn."""
-
 import asyncio
 import copy
 import time
 from typing import Callable, Optional, Dict, Any, List, Tuple
 from collections import deque
 import numpy as np
-
-from app.config import (
-    TARGET_SECONDS,
-    EXPLORE_RATIO,
-    EPSILON_START,
-    EPSILON_FLOOR,
-    MAX_ATTEMPT_STEPS,
-    PHASE1_MAX_ATTEMPTS,
-    PHASE1_STEPS_PER_SEC,
-    TURBO_FPS,
-    FINAL_WALK_STEPS_PER_SEC,
-    CONVERGENCE_CHECK_INTERVAL,
-    CONVERGENCE_ROLLOUTS,
-    CONVERGENCE_STREAK_REQUIRED,
-    MAX_TIMEOUT_SECONDS,
-    NUM_STATES,
-    StageType,
-)
+from app.config import TARGET_SECONDS, EXPLORE_RATIO, EPSILON_START, EPSILON_FLOOR, MAX_ATTEMPT_STEPS, PHASE1_MAX_ATTEMPTS, PHASE1_STEPS_PER_SEC, TURBO_FPS, FINAL_WALK_STEPS_PER_SEC, CONVERGENCE_CHECK_INTERVAL, CONVERGENCE_ROLLOUTS, CONVERGENCE_STREAK_REQUIRED, MAX_TIMEOUT_SECONDS, NUM_STATES, StageType
 from app.env import MazeWorld, decode
 
-
 class Trainer:
-    """Manages the Q-learning lifecycle, pacing, convergence, and 25 Hz frame streaming."""
 
-    def __init__(
-        self,
-        env: MazeWorld,
-        agent: Any,
-        broadcast_callback: Optional[Callable[[Dict[str, Any]], Any]] = None,
-    ):
+    def __init__(self, env: MazeWorld, agent: Any, broadcast_callback: Optional[Callable[[Dict[str, Any]], Any]]=None):
         self.env = env
         self.agent = agent
         self.broadcast_callback = broadcast_callback
-
-        self.stage: StageType = "idle"
+        self.stage: StageType = 'idle'
         self.t: float = 0.0
         self.T: float = TARGET_SECONDS
         self.attempt: int = 0
         self.steps_history: List[int] = []
-
         self.consecutive_converged: int = 0
         self.is_solved: bool = False
         self.final_result: Optional[Dict[str, int]] = None
-
         self.maze_index: int = 0
         self.current_seed: int = 42
         self.best_steps: Optional[int] = None
         self.total_transitions: int = 0
-        self.speed_mode: str = "normal"  # "normal" | "fast" | "step"
-
-        # Episode logging for performance report (A1)
+        self.speed_mode: str = 'normal'
         self.episode_log: List[Dict[str, Any]] = []
         self.visit_counts: np.ndarray = np.zeros(NUM_STATES, dtype=np.int32)
-        self.frozen_snapshot: Optional[Any] = None  # TrainingSnapshot, set on solve
-        self.frozen_report: Optional[Any] = None  # PerformanceReport dict, precomputed on solve
-
+        self.frozen_snapshot: Optional[Any] = None
+        self.frozen_report: Optional[Any] = None
         self._loop_task: Optional[asyncio.Task] = None
         self._stop_event = asyncio.Event()
 
-    def _log_episode(
-        self,
-        steps: int,
-        reached_goal: bool,
-        episode_return: float,
-        wall_bumps: int,
-        epsilon: float,
-    ) -> None:
-        """Record a single episode to the full episode log."""
-        self.episode_log.append({
-            'index': len(self.episode_log),
-            'steps': steps,
-            'reached_goal': reached_goal,
-            'return': round(episode_return, 6),
-            'wall_bumps': wall_bumps,
-            'epsilon_at_start': round(epsilon, 6),
-            'cumulative_transitions': self.total_transitions,
-        })
+    def _log_episode(self, steps: int, reached_goal: bool, episode_return: float, wall_bumps: int, epsilon: float) -> None:
+        self.episode_log.append({'index': len(self.episode_log), 'steps': steps, 'reached_goal': reached_goal, 'return': round(episode_return, 6), 'wall_bumps': wall_bumps, 'epsilon_at_start': round(epsilon, 6), 'cumulative_transitions': self.total_transitions})
 
     def _freeze_snapshot(self) -> None:
-        """Freeze a snapshot of the current training state for the report."""
         from app.evaluation import TrainingSnapshot, build_report
-        # Mark the last episode as the convergence point
         if self.episode_log:
             self.episode_log[-1]['converged'] = True
-        self.frozen_snapshot = TrainingSnapshot(
-            env=self.env,
-            q_table=self.agent.q_table,
-            episode_log=self.episode_log,
-            visit_counts=self.visit_counts,
-            maze_index=self.maze_index,
-            seed=self.current_seed,
-            speed_mode=self.speed_mode,
-        )
+        self.frozen_snapshot = TrainingSnapshot(env=self.env, q_table=self.agent.q_table, episode_log=self.episode_log, visit_counts=self.visit_counts, maze_index=self.maze_index, seed=self.current_seed, speed_mode=self.speed_mode)
         try:
             self.frozen_report = build_report(self.frozen_snapshot)
         except Exception:
             self.frozen_report = None
 
     async def broadcast(self, payload: Dict[str, Any]) -> None:
-        """Send message through WebSocket callback."""
         if self.broadcast_callback:
             try:
                 res = self.broadcast_callback(payload)
@@ -115,9 +56,8 @@ class Trainer:
                 pass
 
     def compute_epsilon(self) -> float:
-        """Linear time-annealed or attempt-annealed epsilon schedule."""
-        if self.speed_mode == "step":
-            eps = 1.0 - (self.attempt / 60.0) * (EPSILON_START - EPSILON_FLOOR)
+        if self.speed_mode == 'step':
+            eps = 1.0 - self.attempt / 60.0 * (EPSILON_START - EPSILON_FLOOR)
             return float(max(EPSILON_FLOOR, min(EPSILON_START, eps)))
         t_explore = self.T * EXPLORE_RATIO
         if t_explore <= 0 or self.t >= t_explore:
@@ -127,69 +67,39 @@ class Trainer:
         return float(max(EPSILON_FLOOR, min(EPSILON_START, eps)))
 
     def _determine_stage(self, eps: float) -> StageType:
-        """Derive plain-English stage from current epsilon and convergence state."""
-        if self.stage == "idle":
-            return "idle"
+        if self.stage == 'idle':
+            return 'idle'
         if self.is_solved:
-            return "solved"
-        if eps > 0.60:
-            return "exploring"
+            return 'solved'
+        if eps > 0.6:
+            return 'exploring'
         if eps > 0.15:
-            return "learning"
-        return "converging"
+            return 'learning'
+        return 'converging'
 
     def _get_downsampled_history(self) -> List[int]:
-        """Downsample steps_history to at most 120 points for clean, fast frontend rendering."""
         if len(self.steps_history) <= 120:
             return self.steps_history
-        # Uniform subsample
         indices = np.linspace(0, len(self.steps_history) - 1, 120, dtype=int)
         return [self.steps_history[i] for i in indices]
 
-    def build_frame(
-        self,
-        agent_r: int,
-        agent_c: int,
-        trail: List[Tuple[int, int]],
-    ) -> Dict[str, Any]:
-        """Construct server frame at ~25 Hz."""
+    def build_frame(self, agent_r: int, agent_c: int, trail: List[Tuple[int, int]]) -> Dict[str, Any]:
         eps = self.compute_epsilon()
         random_pct = int(round(eps * 100))
         stage = self._determine_stage(eps)
-
-        frame: Dict[str, Any] = {
-            "stage": stage,
-            "t": round(self.t, 2),
-            "T": self.T,
-            "attempt": self.attempt,
-            "random_pct": random_pct,
-            "agent": [agent_r, agent_c],
-            "trail": trail,
-            "value": self.agent.get_normalized_values(),
-            "best": self.agent.get_best_actions(),
-            "steps_history": self._get_downsampled_history(),
-            "best_steps": self.best_steps,
-            "total_transitions": self.total_transitions,
-            "optimal_steps": self.env.optimal_len,
-            "maze_index": self.maze_index,
-            "grid": self.env.grid,
-            "speed_mode": self.speed_mode,
-        }
+        frame: Dict[str, Any] = {'stage': stage, 't': round(self.t, 2), 'T': self.T, 'attempt': self.attempt, 'random_pct': random_pct, 'agent': [agent_r, agent_c], 'trail': trail, 'value': self.agent.get_normalized_values(), 'best': self.agent.get_best_actions(), 'steps_history': self._get_downsampled_history(), 'best_steps': self.best_steps, 'total_transitions': self.total_transitions, 'optimal_steps': self.env.optimal_len, 'maze_index': self.maze_index, 'grid': self.env.grid, 'speed_mode': self.speed_mode}
         if self.is_solved and self.final_result:
-            frame["result"] = self.final_result
+            frame['result'] = self.final_result
         return frame
 
     def run_convergence_check(self) -> bool:
-        """Run 10 greedy rollouts to check for 100% optimal BFS path."""
         successes = 0
         lengths = []
         start_s = self.env.reset()
-
         for _ in range(CONVERGENCE_ROLLOUTS):
             s = start_s
             ep_len = 0
             reached_goal = False
-
             for _ in range(MAX_ATTEMPT_STEPS):
                 a = self.agent.greedy_action(s)
                 next_s, _, done = self.env.step(s, a)
@@ -200,43 +110,30 @@ class Trainer:
                 if done:
                     break
                 s = next_s
-
             if reached_goal:
                 successes += 1
                 lengths.append(ep_len)
-
-        is_optimal = (
-            successes == CONVERGENCE_ROLLOUTS
-            and len(lengths) == CONVERGENCE_ROLLOUTS
-            and all(l == self.env.optimal_len for l in lengths)
-        )
-
+        is_optimal = successes == CONVERGENCE_ROLLOUTS and len(lengths) == CONVERGENCE_ROLLOUTS and all((l == self.env.optimal_len for l in lengths))
         if is_optimal:
             self.consecutive_converged += 1
             if self.consecutive_converged >= CONVERGENCE_STREAK_REQUIRED:
                 self.is_solved = True
-                self.final_result = {
-                    "steps": self.env.optimal_len,
-                    "optimal": self.env.optimal_len,
-                }
+                self.final_result = {'steps': self.env.optimal_len, 'optimal': self.env.optimal_len}
                 return True
         else:
             self.consecutive_converged = 0
-
         return False
 
-    async def run(self, seed: Optional[int] = None, target_seconds: Optional[Any] = None) -> None:
-        """Start a new learning run."""
+    async def run(self, seed: Optional[int]=None, target_seconds: Optional[Any]=None) -> None:
         await self.reset()
         if target_seconds is not None:
-            if str(target_seconds).lower() in ("step", "step-by-step", "0", "-1"):
-                self.speed_mode = "step"
+            if str(target_seconds).lower() in ('step', 'step-by-step', '0', '-1'):
+                self.speed_mode = 'step'
                 self.T = 60.0
             else:
-                self.speed_mode = "normal"
+                self.speed_mode = 'normal'
                 self.T = max(3.0, float(target_seconds))
-
-        self.stage = "exploring"
+        self.stage = 'exploring'
         self.t = 0.0
         self.attempt = 0
         self.steps_history = []
@@ -247,23 +144,20 @@ class Trainer:
         self.visit_counts = np.zeros(NUM_STATES, dtype=np.int32)
         self.frozen_snapshot = None
         self.frozen_report = None
-
         if seed is None:
-            self.current_seed = int(np.random.randint(0, 1_000_000))
+            self.current_seed = int(np.random.randint(0, 1000000))
         else:
             self.current_seed = int(seed)
         self.agent.set_seed(self.current_seed)
         self.agent.reset_table()
         self.frozen_snapshot = None
         self.frozen_report = None
-
         self._stop_event.clear()
         self._loop_task = asyncio.create_task(self._train_loop())
 
     async def reset(self) -> None:
-        """Reset trainer back to idle state."""
         self._stop_event.set()
-        if self._loop_task and not self._loop_task.done():
+        if self._loop_task and (not self._loop_task.done()):
             self._loop_task.cancel()
             try:
                 await self._loop_task
@@ -271,8 +165,7 @@ class Trainer:
                 pass
         self._loop_task = None
         self._stop_event.clear()
-
-        self.stage = "idle"
+        self.stage = 'idle'
         self.t = 0.0
         self.attempt = 0
         self.steps_history = []
@@ -284,19 +177,16 @@ class Trainer:
         self.episode_log = []
         self.visit_counts = np.zeros(NUM_STATES, dtype=np.int32)
         self.agent.reset_table()
-
-        # Emit idle frame
         sr, sc = self.env.start_pos
         frame = self.build_frame(sr, sc, [(sr, sc)])
-        frame["stage"] = "idle"
+        frame['stage'] = 'idle'
         await self.broadcast(frame)
 
     async def set_maze(self, index: int) -> None:
-        """Switch maze layout preset, reset agent, and broadcast initial frame."""
         from app.config import MAZE_PRESETS
         index = max(0, min(len(MAZE_PRESETS) - 1, int(index)))
         self._stop_event.set()
-        if self._loop_task and not self._loop_task.done():
+        if self._loop_task and (not self._loop_task.done()):
             self._loop_task.cancel()
             try:
                 await self._loop_task
@@ -304,8 +194,7 @@ class Trainer:
                 pass
         self._loop_task = None
         self._stop_event.clear()
-
-        self.stage = "idle"
+        self.stage = 'idle'
         self.t = 0.0
         self.attempt = 0
         self.steps_history = []
@@ -318,44 +207,34 @@ class Trainer:
         self.visit_counts = np.zeros(NUM_STATES, dtype=np.int32)
         self.frozen_snapshot = None
         self.frozen_report = None
-
         self.maze_index = index
         self.env.set_layout(MAZE_PRESETS[index])
         self.agent.reset_table()
-
         sr, sc = self.env.start_pos
         init_frame = self.build_frame(sr, sc, [(sr, sc)])
-        init_frame["stage"] = "idle"
+        init_frame['stage'] = 'idle'
         await self.broadcast(init_frame)
 
     async def set_speed(self, target_seconds: Any) -> None:
-        """Set target training time budget T or step mode."""
-        if str(target_seconds).lower() in ("step", "step-by-step", "0", "-1"):
-            self.speed_mode = "step"
+        if str(target_seconds).lower() in ('step', 'step-by-step', '0', '-1'):
+            self.speed_mode = 'step'
             self.T = 60.0
         else:
-            self.speed_mode = "normal"
+            self.speed_mode = 'normal'
             self.T = max(3.0, float(target_seconds))
-
-        if self.stage in ("idle", "solved"):
+        if self.stage in ('idle', 'solved'):
             sr, sc = self.env.start_pos
             f = self.build_frame(sr, sc, [(sr, sc)])
-            if self.stage == "idle":
-                f["stage"] = "idle"
+            if self.stage == 'idle':
+                f['stage'] = 'idle'
             await self.broadcast(f)
 
     async def _train_loop(self) -> None:
-        """Master training loop with Step-by-Step mode or Phase 1 flailing + Phase 2 turbo."""
         try:
             start_wall = time.monotonic()
-
-            if self.speed_mode == "step":
-                # -----------------------------------------------------------
-                # Step-by-Step Mode: 100 steps per second, watch every move!
-                # -----------------------------------------------------------
-                step_dt = 0.01  # 10ms = 100 steps/sec
-
-                while not self._stop_event.is_set() and not self.is_solved:
+            if self.speed_mode == 'step':
+                step_dt = 0.01
+                while not self._stop_event.is_set() and (not self.is_solved):
                     self.attempt += 1
                     s = self.env.reset()
                     r, c = decode(s)
@@ -364,54 +243,41 @@ class Trainer:
                     eps = self.compute_epsilon()
                     ep_return = 0.0
                     ep_wall_bumps = 0
-
-                    while steps < MAX_ATTEMPT_STEPS and not self._stop_event.is_set():
+                    while steps < MAX_ATTEMPT_STEPS and (not self._stop_event.is_set()):
                         self.t = time.monotonic() - start_wall
                         a = self.agent.select_action(s, eps)
                         next_s, reward, done = self.env.step(s, a)
                         steps += 1
                         self.total_transitions += 1
                         ep_return += reward
-                        if next_s == s and not done:
+                        if next_s == s and (not done):
                             ep_wall_bumps += 1
                         self.visit_counts[s] += 1
-
                         self.agent.update(s, a, reward, next_s, done)
                         nr, nc = decode(next_s)
                         trail.append((nr, nc))
                         if len(trail) > 30:
                             trail.pop(0)
-
                         frame = self.build_frame(nr, nc, trail)
                         await self.broadcast(frame)
-
                         s = next_s
                         if done:
                             if next_s == self.env.goal_state:
                                 if self.best_steps is None or steps < self.best_steps:
                                     self.best_steps = steps
                             break
-
                         await asyncio.sleep(step_dt)
-
-                    reached_goal = (s == self.env.goal_state)
+                    reached_goal = s == self.env.goal_state
                     self.steps_history.append(steps)
                     self._log_episode(steps, reached_goal, ep_return, ep_wall_bumps, eps)
-
-                    # Convergence check after attempt 15
                     if self.attempt >= 15 and self.attempt % 5 == 0:
                         if self.run_convergence_check():
                             self._freeze_snapshot()
                             break
-
             else:
-                # -----------------------------------------------------------
-                # Phase 1: Visible Flailing (Attempts 1 to 5)
-                # -----------------------------------------------------------
                 for att_idx in range(1, PHASE1_MAX_ATTEMPTS + 1):
                     if self._stop_event.is_set():
                         return
-
                     self.attempt += 1
                     s = self.env.reset()
                     r, c = decode(s)
@@ -421,10 +287,8 @@ class Trainer:
                     ep_return = 0.0
                     ep_wall_bumps = 0
                     eps = self.compute_epsilon()
-
                     max_visible_steps = 20
-
-                    while steps < max_visible_steps and not self._stop_event.is_set():
+                    while steps < max_visible_steps and (not self._stop_event.is_set()):
                         self.t = time.monotonic() - start_wall
                         eps = self.compute_epsilon()
                         a = self.agent.select_action(s, eps)
@@ -432,53 +296,37 @@ class Trainer:
                         steps += 1
                         self.total_transitions += 1
                         ep_return += reward
-                        if next_s == s and not done:
+                        if next_s == s and (not done):
                             ep_wall_bumps += 1
                         self.visit_counts[s] += 1
-
                         self.agent.update(s, a, reward, next_s, done)
                         nr, nc = decode(next_s)
                         trail.append((nr, nc))
-
                         frame = self.build_frame(nr, nc, trail)
                         await self.broadcast(frame)
-
                         s = next_s
                         if done:
                             if next_s == self.env.goal_state:
                                 if self.best_steps is None or steps < self.best_steps:
                                     self.best_steps = steps
                             break
-
                         await asyncio.sleep(step_dt)
-
-                    reached_goal = (s == self.env.goal_state)
+                    reached_goal = s == self.env.goal_state
                     self.steps_history.append(steps)
                     self._log_episode(steps, reached_goal, ep_return, ep_wall_bumps, eps)
-
-                # -----------------------------------------------------------
-                # Phase 2: Turbo Learning (25 Hz Frames)
-                # -----------------------------------------------------------
-                target_frame_dt = 1.0 / TURBO_FPS  # 0.04s
-
-                while not self._stop_event.is_set() and not self.is_solved:
+                target_frame_dt = 1.0 / TURBO_FPS
+                while not self._stop_event.is_set() and (not self.is_solved):
                     frame_start = time.monotonic()
                     self.t = frame_start - start_wall
-
-                    # Timeout guard (1.5 * T = 60s)
                     if self.t >= MAX_TIMEOUT_SECONDS:
-                        await self.broadcast({"type": "error", "message": "Failed to converge within timeout."})
-                        self.stage = "idle"
+                        await self.broadcast({'type': 'error', 'message': 'Failed to converge within timeout.'})
+                        self.stage = 'idle'
                         return
-
-                    # Ramp batch size from 2 up to 200 based on progress
                     prog = min(1.0, max(0.0, self.t / self.T))
                     batch_size = int(2 + 150 * prog)
-
                     latest_trail: List[Tuple[int, int]] = []
                     last_r, last_c = self.env.start_pos
                     eps = self.compute_epsilon()
-
                     for _ in range(batch_size):
                         self.attempt += 1
                         s = self.env.reset()
@@ -486,14 +334,13 @@ class Trainer:
                         steps = 0
                         ep_return = 0.0
                         ep_wall_bumps = 0
-
                         for _ in range(MAX_ATTEMPT_STEPS):
                             a = self.agent.select_action(s, eps)
                             next_s, reward, done = self.env.step(s, a)
                             steps += 1
                             self.total_transitions += 1
                             ep_return += reward
-                            if next_s == s and not done:
+                            if next_s == s and (not done):
                                 ep_wall_bumps += 1
                             self.visit_counts[s] += 1
                             self.agent.update(s, a, reward, next_s, done)
@@ -504,78 +351,56 @@ class Trainer:
                                     if self.best_steps is None or steps < self.best_steps:
                                         self.best_steps = steps
                                 break
-
-                        reached_goal = (s == self.env.goal_state)
+                        reached_goal = s == self.env.goal_state
                         self.steps_history.append(steps)
                         self._log_episode(steps, reached_goal, ep_return, ep_wall_bumps, eps)
                         latest_trail = trail_attempt
                         last_r, last_c = trail_attempt[-1]
-
-                        # Convergence check every 25 attempts
                         if self.attempt % CONVERGENCE_CHECK_INTERVAL == 0:
                             if self.run_convergence_check():
                                 self._freeze_snapshot()
                                 break
-
-                    # Broadcast 25 Hz frame
                     frame = self.build_frame(last_r, last_c, latest_trail)
                     await self.broadcast(frame)
-
                     if self.is_solved:
                         break
-
                     duration = time.monotonic() - frame_start
                     sleep_time = max(0.001, target_frame_dt - duration)
                     await asyncio.sleep(sleep_time)
-
-            # ---------------------------------------------------------------
-            # Phase 3: Final Solved Walk (~12 steps per second)
-            # ---------------------------------------------------------------
             if self.is_solved:
                 await asyncio.sleep(0.3)
                 await self._run_final_walk()
-
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            await self.broadcast({"type": "error", "message": str(e)})
+            await self.broadcast({'type': 'error', 'message': str(e)})
 
     async def _run_final_walk(self) -> None:
-        """Stream a visible victory walk following the optimal path."""
-        self.stage = "solved"
+        self.stage = 'solved'
         start_s = self.env.reset()
         r, c = decode(start_s)
         trail: List[Tuple[int, int]] = [(r, c)]
         s = start_s
         step_dt = 1.0 / FINAL_WALK_STEPS_PER_SEC
-
         while not self._stop_event.is_set():
             a = self.agent.greedy_action(s)
             next_s, _, done = self.env.step(s, a)
             nr, nc = decode(next_s)
             trail.append((nr, nc))
-
             if self._stop_event.is_set():
                 return
-
             frame = self.build_frame(nr, nc, trail)
-            frame["stage"] = "solved"
+            frame['stage'] = 'solved'
             await self.broadcast(frame)
-
             s = next_s
             if s == self.env.goal_state or done:
                 break
-
             await asyncio.sleep(step_dt)
-
         if self._stop_event.is_set():
             return
-
-        # Final persistent frame
         await asyncio.sleep(0.2)
         if self._stop_event.is_set():
             return
-
         final_frame = self.build_frame(self.env.goal_pos[0], self.env.goal_pos[1], trail)
-        final_frame["stage"] = "solved"
+        final_frame['stage'] = 'solved'
         await self.broadcast(final_frame)

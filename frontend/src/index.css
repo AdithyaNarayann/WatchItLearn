@@ -47,7 +47,6 @@
   }
 }
 
-/* 200 ms fade for report overlay */
 .report-fade-enter {
   opacity: 0;
   transition: opacity 200ms ease-out;
@@ -56,7 +55,6 @@
   opacity: 1;
 }
 
-/* Print Stylesheet: Flat, A4 landscape, no scrollbars */
 @media print {
   @page {
     size: A4 landscape;
