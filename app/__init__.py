@@ -1,1 +1,1 @@
-"""WatchItLearn application package."""
+pass
