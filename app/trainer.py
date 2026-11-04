@@ -1,8 +1,6 @@
 import asyncio
-import copy
 import time
 from typing import Callable, Optional, Dict, Any, List, Tuple
-from collections import deque
 import numpy as np
 from app.config import TARGET_SECONDS, EXPLORE_RATIO, EPSILON_START, EPSILON_FLOOR, MAX_ATTEMPT_STEPS, PHASE1_MAX_ATTEMPTS, PHASE1_STEPS_PER_SEC, TURBO_FPS, FINAL_WALK_STEPS_PER_SEC, CONVERGENCE_CHECK_INTERVAL, CONVERGENCE_ROLLOUTS, CONVERGENCE_STREAK_REQUIRED, MAX_TIMEOUT_SECONDS, NUM_STATES, StageType
 from app.env import MazeWorld, decode

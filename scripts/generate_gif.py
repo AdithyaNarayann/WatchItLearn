@@ -2,7 +2,7 @@ import sys
 import json
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 import numpy as np
 from app.env import MazeWorld
 

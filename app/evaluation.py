@@ -2,7 +2,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 from collections import deque
 from pydantic import BaseModel
-from app.config import MAZE_ROWS, MAZE_COLS, NUM_STATES, NUM_ACTIONS, ACTIONS, REWARD_STEP, REWARD_GOAL, MAX_ATTEMPT_STEPS, ALPHA, GAMMA, EPSILON_START, EPSILON_FLOOR, MAZE_PRESET_NAMES
+from app.config import MAZE_ROWS, MAZE_COLS, NUM_STATES, NUM_ACTIONS, ACTIONS, MAX_ATTEMPT_STEPS, ALPHA, GAMMA, EPSILON_START, EPSILON_FLOOR, MAZE_PRESET_NAMES
 from app.env import MazeWorld, encode, decode
 
 class ReportMeta(BaseModel):

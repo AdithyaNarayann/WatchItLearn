@@ -1,12 +1,10 @@
 import argparse
 import json
-import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-from concurrent.futures import ProcessPoolExecutor, as_completed
 import numpy as np
-from app.config import MAZE_PRESETS, MAZE_PRESET_NAMES, ALPHA, GAMMA, EPSILON_START, EPSILON_FLOOR, MAX_ATTEMPT_STEPS, CONVERGENCE_ROLLOUTS, CONVERGENCE_STREAK_REQUIRED, NUM_ACTIONS
+from app.config import MAZE_PRESETS, MAZE_PRESET_NAMES, ALPHA, GAMMA, EPSILON_START, EPSILON_FLOOR, MAX_ATTEMPT_STEPS, CONVERGENCE_ROLLOUTS, CONVERGENCE_STREAK_REQUIRED
 from app.env import MazeWorld
 from app.agents import QLearningAgent
 MAX_EPISODES = 3000
