@@ -225,7 +225,7 @@ class Trainer:
 
         return False
 
-    async def run(self, seed: Optional[int] = 42, target_seconds: Optional[Any] = None) -> None:
+    async def run(self, seed: Optional[int] = None, target_seconds: Optional[Any] = None) -> None:
         """Start a new learning run."""
         await self.reset()
         if target_seconds is not None:
@@ -248,7 +248,10 @@ class Trainer:
         self.frozen_snapshot = None
         self.frozen_report = None
 
-        self.current_seed = seed if seed is not None else 42
+        if seed is None:
+            self.current_seed = int(np.random.randint(0, 1_000_000))
+        else:
+            self.current_seed = int(seed)
         self.agent.set_seed(self.current_seed)
         self.agent.reset_table()
         self.frozen_snapshot = None

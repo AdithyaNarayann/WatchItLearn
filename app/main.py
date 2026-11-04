@@ -154,7 +154,8 @@ async def ws_train(websocket: WebSocket):
 
             if cmd_type == "run":
                 speed = cmd.get("speed") or cmd.get("target_seconds")
-                await trainer.run(seed=42, target_seconds=speed)
+                seed = cmd.get("seed", None)
+                await trainer.run(seed=seed, target_seconds=speed)
             elif cmd_type == "reset":
                 await trainer.reset()
             elif cmd_type == "set_maze":
